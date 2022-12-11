@@ -11,14 +11,10 @@ struct TopThree {
 impl TopThree {
     fn update(&mut self, mut new: u32) {
         if new >= self.a {
-            let old = self.a;
-            self.a = new;
-            new = old;
+            std::mem::swap(&mut self.a, &mut new);
         }
         if new >= self.b {
-            let old = self.b;
-            self.b = new;
-            new = old;
+            std::mem::swap(&mut self.b, &mut new);
         }
         if new >= self.c {
             self.c = new;
