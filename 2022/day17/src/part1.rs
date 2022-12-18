@@ -53,41 +53,55 @@ impl From<&str> for JetMovement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Rock {
-    Horizontal,
-    Cross,
-    Corner,
-    Vertical,
-    Square,
-}
+struct Rock(u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RockGenerator {
-    last: Rock,
-}
+impl Rock {
+    const fn horizontal() -> Self {
+        let bottom = 0b0111_1000;
+        Self(bottom)
+    }
+    const HORIZONTAL: Self = Self::horizontal();
 
-impl Default for RockGenerator {
-    fn default() -> Self {
-        RockGenerator { last: Rock::Square }
+    const fn cross() -> Self {
+        let top = 0b0010_0000;
+        let mid = 0b0111_0000;
+        let bottom = 0b0010_0000;
+        Self(top << 16 | mid << 8 | bottom)
+    }
+    const CROSS: Self = Self::cross();
+
+    const fn corner() -> Self {
+        let top = 0b0001_0000;
+        let mid = 0b0001_0000;
+        let bottom = 0b0111_0000;
+        Self(top << 16 | mid << 8 | bottom)
+    }
+    const CORNER: Self = Self::corner();
+
+    const fn vertical() -> Self {
+        let a = 0b100_0000;
+        let b = 0b100_0000;
+        let c = 0b100_0000;
+        let d = 0b100_0000;
+        Self(a << 24 | b << 16 | c << 8 | d)
+    }
+    const VERTICAL: Self = Self::vertical();
+
+    const fn square() -> Self {
+        let top = 0b0110_0000;
+        let bottom = 0b0110_0000;
+        Self(top << 8 | bottom)
+    }
+    const SQUARE: Self = Self::square();
+
+    fn _eprint(&self, x: usize) {
+        eprintln!("<rock>");
+        let line: [u8; 4] = (self.0 >> x).to_le_bytes();
+        _print_map(&line);
     }
 }
 
-impl Iterator for RockGenerator {
-    type Item = Rock;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.last = match self.last {
-            Rock::Horizontal => Rock::Cross,
-            Rock::Cross => Rock::Corner,
-            Rock::Corner => Rock::Vertical,
-            Rock::Vertical => Rock::Square,
-            Rock::Square => Rock::Horizontal,
-        };
-        return Some(self.last);
-    }
-}
-
-type Line = [bool; 7];
+type Line = u8;
 
 trait Helper {
     fn empty(&self) -> bool;
@@ -95,112 +109,47 @@ trait Helper {
 
 impl Helper for Line {
     fn empty(&self) -> bool {
-        self[0] == false
-            && self[1] == false
-            && self[2] == false
-            && self[3] == false
-            && self[4] == false
-            && self[5] == false
-            && self[6] == false
+        *self == 0
     }
 }
 
-fn extend_map(map: &mut Vec<Line>, rock: Rock) -> usize {
-    let highest = map
+fn extend_map(map: &mut Vec<Line>) -> usize {
+    let y = map
         .iter()
         .enumerate()
         .rev()
         .find(|(_, l)| !l.empty())
-        .map(|(idx, _)| idx);
-    let to_add = match highest {
-        Some(idx) => (idx + 3).checked_sub(map.len()).unwrap_or(0),
-        None => 3,
-    } + match rock {
-        Rock::Horizontal => 1,
-        Rock::Cross => 3,
-        Rock::Corner => 3,
-        Rock::Vertical => 4,
-        Rock::Square => 2,
-    };
-    for _ in 0..to_add {
+        .map(|(idx, _)| idx + 4)
+        .unwrap_or(3);
+    for _ in map.len()..(y + 4) {
         map.push(Line::default());
     }
-    highest.map(|h| h + 4).unwrap_or(3)
+    y
+}
+
+fn field(y: usize, map: &[Line]) -> u32 {
+    let bytes: [u8; 4] = <[u8; 4]>::try_from(&map[y..=y + 3]).unwrap_or([0, 0, 0, 0]);
+    u32::from_le_bytes(bytes)
 }
 
 fn move_in_direction(x: &mut usize, y: usize, map: &[Line], direction: JetDirection, rock: Rock) {
+    let field = field(y, map);
     if direction == JetDirection::Left {
         // left
         if *x == 0 {
             return;
         }
-        match rock {
-            Rock::Horizontal => {
-                if !map[y][*x - 1] {
-                    *x -= 1;
-                }
-            }
-            Rock::Cross => {
-                if !(map[y][*x] || map[y + 1][*x - 1] || map[y + 2][*x]) {
-                    *x -= 1;
-                }
-            }
-            Rock::Corner => {
-                if !(map[y][*x - 1] || map[y + 1][*x + 1] || map[y + 2][*x + 1]) {
-                    *x -= 1;
-                }
-            }
-            Rock::Vertical => {
-                if !(map[y][*x - 1]
-                    || map[y + 1][*x - 1]
-                    || map[y + 2][*x - 1]
-                    || map[y + 3][*x - 1])
-                {
-                    *x -= 1;
-                }
-            }
-            Rock::Square => {
-                if !(map[y][*x - 1] || map[y + 1][*x - 1]) {
-                    *x -= 1;
-                }
-            }
+        if rock.0 >> (*x - 1) & field == 0 {
+            *x -= 1;
         }
     } else {
         // right
-        if *x == 6 {
+        if rock.0 >> (*x) & 0x01010101 != 0 {
+            // if any touch the right wall can't go right
             return;
         }
-        match rock {
-            Rock::Horizontal => {
-                if *x <= 2 && !map[y][*x + 4] {
-                    *x += 1;
-                }
-            }
-            Rock::Cross => {
-                if *x <= 3 && !(map[y][*x + 2] || map[y + 1][*x + 3] || map[y + 2][*x + 2]) {
-                    *x += 1;
-                }
-            }
-            Rock::Corner => {
-                if *x <= 3 && !(map[y][*x + 3] || map[y + 1][*x + 3] || map[y + 2][*x + 3]) {
-                    *x += 1;
-                }
-            }
-            Rock::Vertical => {
-                if *x <= 5
-                    && !(map[y][*x + 1]
-                        || map[y + 1][*x + 1]
-                        || map[y + 2][*x + 1]
-                        || map[y + 3][*x + 1])
-                {
-                    *x += 1;
-                }
-            }
-            Rock::Square => {
-                if *x <= 4 && !(map[y][*x + 2] || map[y + 1][*x + 2]) {
-                    *x += 1;
-                }
-            }
+        if rock.0 >> (*x + 1) & field == 0 {
+            *x += 1;
         }
     }
 }
@@ -209,85 +158,21 @@ fn try_down(y: &mut usize, x: usize, map: &mut [Line], rock: Rock) -> bool {
     if *y == 0 {
         return false;
     }
-    match rock {
-        Rock::Horizontal => {
-            if !(map[*y - 1][x] || map[*y - 1][x + 1] || map[*y - 1][x + 2] || map[*y - 1][x + 3]) {
-                *y -= 1;
-                true
-            } else {
-                false
-            }
-        }
-        Rock::Cross => {
-            if !(map[*y - 1][x + 1] || map[*y][x] || map[*y][x + 2]) {
-                *y -= 1;
-                true
-            } else {
-                false
-            }
-        }
-        Rock::Corner => {
-            if !(map[*y - 1][x] || map[*y - 1][x + 1] || map[*y - 1][x + 2]) {
-                *y -= 1;
-                true
-            } else {
-                false
-            }
-        }
-        Rock::Vertical => {
-            if !(map[*y - 1][x]) {
-                *y -= 1;
-                true
-            } else {
-                false
-            }
-        }
-        Rock::Square => {
-            if !(map[*y - 1][x] || map[*y - 1][x + 1]) {
-                *y -= 1;
-                true
-            } else {
-                false
-            }
-        }
+    let field = field(*y - 1, map);
+    if (rock.0 >> x & field) == 0 {
+        *y -= 1;
+        true
+    } else {
+        false
     }
 }
 
 fn place_piece(x: usize, y: usize, map: &mut [Line], rock: Rock) {
-    match rock {
-        Rock::Horizontal => {
-            map[y][x] = true;
-            map[y][x + 1] = true;
-            map[y][x + 2] = true;
-            map[y][x + 3] = true;
-        }
-        Rock::Cross => {
-            map[y + 1][x] = true;
-            map[y + 0][x + 1] = true;
-            map[y + 1][x + 1] = true;
-            map[y + 2][x + 1] = true;
-            map[y + 1][x + 2] = true;
-        }
-        Rock::Corner => {
-            map[y][x] = true;
-            map[y][x + 1] = true;
-            map[y][x + 2] = true;
-            map[y + 1][x + 2] = true;
-            map[y + 2][x + 2] = true;
-        }
-        Rock::Vertical => {
-            map[y][x] = true;
-            map[y + 1][x] = true;
-            map[y + 2][x] = true;
-            map[y + 3][x] = true;
-        }
-        Rock::Square => {
-            map[y][x] = true;
-            map[y][x + 1] = true;
-            map[y + 1][x] = true;
-            map[y + 1][x + 1] = true;
-        }
-    }
+    let rock = rock.0 >> x;
+    map[y + 3] |= (rock >> 24) as u8;
+    map[y + 2] |= (rock >> 16) as u8;
+    map[y + 1] |= (rock >> 8) as u8;
+    map[y + 0] |= rock as u8;
 }
 
 fn map_height(map: &[Line]) -> usize {
@@ -299,35 +184,51 @@ fn map_height(map: &[Line]) -> usize {
         .unwrap()
 }
 
+fn _eprint_x(x: usize) {
+    for _ in 0..x {
+        eprint!(".");
+    }
+    eprintln!("");
+}
+
+fn simulate_rock(map: &mut Vec<Line>, rock: Rock, jet_movement: &mut JetMovement) {
+    let mut y = extend_map(map);
+    let mut x = 2usize;
+    loop {
+        let direction = jet_movement.next().unwrap();
+        move_in_direction(&mut x, y, &map, direction, rock);
+        let went_down = try_down(&mut y, x, map, rock);
+        if !went_down {
+            place_piece(x, y, map, rock);
+            break;
+        }
+    }
+}
+
 fn simulate(
     map: &mut Vec<Line>,
-    mut rocks: RockGenerator,
+    mut rocks: impl Iterator<Item = Rock>,
     jet_movement: &mut JetMovement,
 ) -> usize {
     for _round in 0..2022 {
         // start rock drop
         let rock = rocks.next().unwrap();
-        let mut y = extend_map(map, rock);
-        let mut x = 2usize;
-        loop {
-            let direction = jet_movement.next().unwrap();
-            move_in_direction(&mut x, y, &map, direction, rock);
-            let went_down = try_down(&mut y, x, map, rock);
-            if !went_down {
-                place_piece(x, y, map, rock);
-                break;
-            }
-        }
+        simulate_rock(map, rock, jet_movement);
+
+        // dbg!(_round);
+        // eprintln!("<map>");
+        // _print_map(&map);
     }
 
     map_height(&map)
 }
 
-fn _print_map(map: &[[bool; 7]]) {
-    let mut res = String::with_capacity(7 * map.len());
-    for line in map.iter().rev().filter(|l| !l.empty()) {
-        for b in line {
-            if *b {
+fn _print_map(map: &[Line]) {
+    let mut res = String::with_capacity(8 * map.len());
+    for line in map.iter().rev().filter(|l| **l != 0 || map.len() < 5) {
+        for p in (0..7).rev() {
+            let mask = 2u8.pow(p);
+            if line & mask == mask {
                 res.push('#');
             } else {
                 res.push('.')
@@ -335,7 +236,7 @@ fn _print_map(map: &[[bool; 7]]) {
         }
         res.push('\n');
     }
-    print!("{res}");
+    eprint!("{res}");
 }
 
 fn main() -> std::io::Result<()> {
@@ -347,7 +248,15 @@ fn main() -> std::io::Result<()> {
         .unwrap()
         .as_str()
         .into();
-    let rocks = RockGenerator::default();
+    let rocks = vec![
+        Rock::HORIZONTAL,
+        Rock::CROSS,
+        Rock::CORNER,
+        Rock::VERTICAL,
+        Rock::SQUARE,
+    ]
+    .into_iter()
+    .cycle();
     let mut map = vec![];
 
     let res = simulate(&mut map, rocks, &mut jet_movement);
